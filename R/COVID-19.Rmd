@@ -1,0 +1,544 @@
+---
+title: "COVID-19 Analysis"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+---
+
+Based on COVID-19 case and death data from the [New York Times COVID-19 data repository](https://github.com/nytimes/covid-19-data) and population data from [US Census Bureau](https://www2.census.gov/programs-surveys/popest/datasets/2010-2019/counties/totals/).
+
+```{r echo = FALSE}
+covid_st <- read.csv("../../../nytimes/covid-19-data/us-states.csv")
+covid_st$date <- as.Date(covid_st$date)
+
+covid_co <- read.csv("../../../nytimes/covid-19-data/us-counties.csv")
+covid_co$date <- as.Date(covid_co$date)
+
+pop_co <- read.csv("../census/co-est2019-alldata.csv")[, c("STATE", "COUNTY", "STNAME", "CTYNAME", "POPESTIMATE2019")]
+pop_st <- read.csv("../census/SCPRC-EST2019-18+POP-RES.csv")[, c("STATE", "NAME", "POPESTIMATE2019")]
+
+# https://gist.github.com/dantonnoriega/bf1acd2290e15b91e6710b6fd3be0a53
+
+postal <- read.csv("../dantonnoriega/us-state-ansi-fips.csv")
+
+# merge state data
+
+m_st <- merge(x=covid_st, y=pop_st, by.x="fips", by.y="STATE", all.x=FALSE, all.y=FALSE)
+m_st <- merge(x=m_st, y=postal, by.x="fips", by.y="st")
+
+# load 2016 state election data
+
+elec_st<-read.csv("../elections/1976-2016-president.csv")
+elec_st_2016 <- elec_st[elec_st$year == 2016 & is.element(elec_st$party, c("democrat", "republican")), ]
+elec_st_2016$share <- elec_st_2016$candidatevotes / elec_st_2016$totalvotes
+elec_st_2016_a <-
+  aggregate(elec_st_2016[, "share", drop=FALSE],
+  by = list(state_fips = elec_st_2016$state_fips, party=elec_st_2016$party),
+  sum)
+elec_st_2016_m <- merge(
+  x=elec_st_2016_a[elec_st_2016_a$party == "democrat", ],
+  y=elec_st_2016_a[elec_st_2016_a$party == "republican", ],
+  by="state_fips",
+  suffixes=c(".d", ".r")
+)
+elec_st_2016_m$color <- ifelse(
+  elec_st_2016_m$share.d - elec_st_2016_m$share.r > .05,
+  "blue",
+  ifelse(
+    elec_st_2016_m$share.r - elec_st_2016_m$share.d > .05,
+   "red",
+   "purple"
+  )
+)
+
+# mark states red or not.
+
+m_st <- merge(x=m_st, y=elec_st_2016_m[, c("state_fips", "color")], by.x="fips", by.y="state_fips")
+
+# add data for last week
+
+m_st$w1 <- m_st$date - 7
+m_st <- merge(x=m_st, y=m_st[, c("date", "fips", "cases", "deaths")], by.x=c("fips", "w1"), by.y=c("fips", "date"), all.x=TRUE, suffixes=c("", ".w1"))
+
+# add data for two weeks ago
+
+m_st$w2 <- m_st$date - 14
+m_st <- merge(x=m_st, y=m_st[, c("date", "fips", "cases", "deaths")], by.x=c("fips", "w2"), by.y=c("fips", "date"), all.x=TRUE, suffixes=c("", ".w2"))
+
+# calculate per capita rates
+
+m_st$cases_permil <- m_st$cases / m_st$POPESTIMATE2019 * 1000000.
+m_st$deaths_permil <- m_st$deaths / m_st$POPESTIMATE2019 * 1000000.
+
+m_st$new_cases <- m_st$cases - m_st$cases.w1
+m_st$new_deaths <- m_st$deaths - m_st$deaths.w1
+m_st$new_cases_permil <- m_st$new_cases / m_st$POPESTIMATE2019 * 1000000.
+m_st$new_deaths_permil <- m_st$new_deaths / m_st$POPESTIMATE2019 * 1000000.
+
+m_st$new_case_growth <- m_st$cases - 2 * m_st$cases.w1 + m_st$cases.w2
+m_st$new_death_growth <- m_st$deaths - 2 * m_st$deaths.w1 + m_st$deaths.w2
+m_st$new_case_growth_permil <- m_st$new_case_growth / m_st$POPESTIMATE2019 * 1000000.
+m_st$new_death_growth_permil <- m_st$new_death_growth / m_st$POPESTIMATE2019 * 1000000.
+
+# calculate ranks for each date
+
+for (date in min(m_st$date):max(m_st$date)) {
+  m_st[m_st$date == date, "c_rank"] <- rank(m_st[m_st$date == date, "cases_permil"])
+  m_st[m_st$date == date, "d_rank"] <- rank(m_st[m_st$date == date, "deaths_permil"])
+  m_st[m_st$date == date, "new_c_rank"] <- rank(m_st[m_st$date == date, "new_cases_permil"])
+  m_st[m_st$date == date, "new_d_rank"] <- rank(m_st[m_st$date == date, "new_deaths_permil"])
+  m_st[m_st$date == date, "new_c_growth_rank"] <- rank(m_st[m_st$date == date, "new_case_growth_permil"])
+  m_st[m_st$date == date, "new_d_growth_rank"] <- rank(m_st[m_st$date == date, "new_death_growth_permil"])
+}
+
+# merge county data
+
+pop_co$FIPS = pop_co$STATE * 1000 + pop_co$COUNTY
+m_co <- merge(x=covid_co, y=pop_co[, c("FIPS", "POPESTIMATE2019") ], by.x="fips", by.y="FIPS",
+              all.x=FALSE, all.y=FALSE)
+
+# add data for last week
+
+m_co$w1 <- m_co$date - 7
+m_co <- merge(x=m_co, y=m_co[, c("date", "fips", "cases", "deaths")], by.x=c("fips", "w1"), by.y=c("fips", "date"), all.x=TRUE, suffixes=c("", ".w1"))
+
+# add data for two weeks ago
+
+m_co$w2 <- m_co$date - 14
+m_co <- merge(x=m_co, y=m_co[, c("date", "fips", "cases", "deaths")], by.x=c("fips", "w2"), by.y=c("fips", "date"), all.x=TRUE, suffixes=c("", ".w2"))
+
+m_co$cases_permil <- m_co$cases / m_co$POPESTIMATE2019 * 1000000.
+m_co$deaths_permil <- m_co$deaths / m_co$POPESTIMATE2019 * 1000000.
+
+m_co$new_cases <- m_co$cases - m_co$cases.w1
+m_co$new_deaths <- m_co$deaths - m_co$deaths.w1
+m_co$new_cases_permil <- m_co$new_cases / m_co$POPESTIMATE2019 * 1000000.
+m_co$new_deaths_permil <- m_co$new_deaths / m_co$POPESTIMATE2019 * 1000000.
+
+m_co$new_case_growth <- m_co$cases - 2 * m_co$cases.w1 + m_co$cases.w2
+m_co$new_death_growth <- m_co$deaths - 2 * m_co$deaths.w1 + m_co$deaths.w2
+m_co$new_case_growth_permil <- m_co$new_case_growth / m_co$POPESTIMATE2019 * 1000000.
+m_co$new_death_growth_permil <- m_co$new_death_growth / m_co$POPESTIMATE2019 * 1000000.
+
+# calculate ranks for each date
+
+m_co_ca <- m_co[m_co$state == "California", ]
+for (date in min(m_co_ca$date):max(m_co_ca$date)) {
+  m_co_ca[m_co_ca$date == date, "c_rank"] <- rank(m_co_ca[m_co_ca$date == date, "cases_permil"])
+  m_co_ca[m_co_ca$date == date, "d_rank"] <- rank(m_co_ca[m_co_ca$date == date, "deaths_permil"])
+  m_co_ca[m_co_ca$date == date, "new_c_rank"] <- rank(m_co_ca[m_co_ca$date == date, "new_cases_permil"])
+  m_co_ca[m_co_ca$date == date, "new_d_rank"] <- rank(m_co_ca[m_co_ca$date == date, "new_deaths_permil"])
+  m_co_ca[m_co_ca$date == date, "new_c_growth_rank"] <- rank(m_co_ca[m_co_ca$date == date, "new_case_growth_permil"])
+  m_co_ca[m_co_ca$date == date, "new_d_growth_rank"] <- rank(m_co_ca[m_co_ca$date == date, "new_death_growth_permil"])
+}
+
+```
+
+States of interest:
+
+```{r echo = FALSE}
+states <- c("California", "Mississippi", "Illinois", "District of Columbia", "New York", "Massachusetts", "Texas", "North Carolina", "Louisiana", "Alabama", "Oklahoma")
+states
+```
+
+## Cumulative Analysis
+
+### States
+
+State data as of:
+
+```{r echo = FALSE}
+last_st <- max(m_st$date)
+last_st
+t_st <- m_st[m_st$date == last_st, ]
+```
+
+Total cases:
+
+```{r echo = FALSE}
+sum(t_st$cases)
+```
+
+Total deaths:
+
+```{r echo = FALSE}
+sum(t_st$deaths)
+```
+
+#### State case rank
+
+```{r echo = FALSE}
+c_order_st <- order(t_st$c_rank)
+t_st[c_order_st, c("state", "cases", "cases_permil", "c_rank")]
+```
+
+```{r echo = FALSE, fig.height=8}
+m_st_sel <- m_st[is.element(m_st$state, states) & m_st$date >= "2020-03-01", ]
+xrange <- range(m_st_sel$date)
+xrange[2] <- xrange[2] + 7 # pad to leave space on right for labels
+yrange <- range(m_st_sel$c_rank)
+plot(xrange, yrange, type="n", xlab="Date",
+   ylab="Per Capita Case Rank", bty="n")
+pallette <- rainbow(length(states))
+names(pallette) <- states
+for (state in states) {
+  st_df <- m_st[m_st$state == state, ]
+  st_df <- st_df[order(st_df$date), ]
+  lines(st_df$date, smooth(st_df$c_rank, kind="3RS3R", endrule="copy"), col=pallette[state])
+  last <- st_df[nrow(st_df), ]
+  text(last$date, y=last$c_rank, last$stusps, pos=4, offset=0.1, cex=0.8, col=pallette[state])
+} 
+
+```
+
+#### State death rank
+
+```{r echo = FALSE}
+d_order_st <- order(t_st$d_rank)
+t_st[d_order_st, c("state", "deaths", "deaths_permil", "d_rank")]
+```
+
+```{r echo = FALSE, fig.height=8}
+m_st_sel <- m_st[is.element(m_st$state, states) & m_st$date >= "2020-03-01", ]
+xrange <- range(m_st_sel$date)
+xrange[2] <- xrange[2] + 7 # pad to leave space on right for labels
+yrange <- range(m_st_sel$d_rank)
+plot(xrange, yrange, type="n", xlab="Date",
+   ylab="Per Capita Death Rank", bty="n")
+pallette <- rainbow(length(states))
+names(pallette) <- states
+for (state in states) {
+  st_df <- m_st[m_st$state == state, ]
+  st_df <- st_df[order(st_df$date), ]
+  lines(st_df$date, smooth(st_df$d_rank, kind="3RS3R", endrule="copy"), col=pallette[state])
+  last <- st_df[nrow(st_df), ]
+  text(last$date, y=last$d_rank, last$stusps, pos=4, offset=0.1, cex=0.8, col=pallette[state])
+} 
+
+```
+
+## Counties
+
+County data as of:
+
+```{r echo = FALSE}
+last_co <- max(m_co$date)
+t_co <- m_co[m_co$date == last_co, ]
+t_co_ca <- m_co_ca[m_co_ca$date == last_co, ]
+last_co
+```
+Total counties:
+
+```{r echo = FALSE}
+nrow(t_co)
+```
+
+Counties from selected states with death rank in bottom 100:
+
+```{r echo = FALSE}
+t_co$d_rank <- rank(t_co$deaths_permil)
+d_order_co <- order(t_co$d_rank)
+
+t_co_100 <- t_co[tail(d_order_co, 100), c("state", "county", "deaths", "deaths_permil", "d_rank")]
+t_co_100[is.element(t_co_100$state, states), ]
+```
+
+Selected state contributions to worst 100 counties:
+
+```{r echo = FALSE}
+st_co_table <- table(state=t_co[tail(d_order_co, 100), "state"])
+st_co_table_df <- as.data.frame(st_co_table, responseName="counties")
+st_co_table_df <- st_co_table_df[is.element(st_co_table_df$state, states), ]
+st_co_table_df[order(st_co_table_df$counties), ]
+```
+
+## Latest Week Analysis
+
+### State new case rank
+
+```{r echo = FALSE}
+new_c_order_st <- order(t_st$new_c_rank)
+t_st[new_c_order_st, c("state", "new_cases", "new_cases_permil", "new_c_rank")]
+```
+
+```{r echo = FALSE, fig.height=8}
+m_st_sel <- m_st[is.element(m_st$state, states) & m_st$date >= "2020-03-01", ]
+xrange <- range(m_st_sel$date)
+xrange[2] <- xrange[2] + 7 # pad to leave space on right for labels
+yrange <- range(m_st_sel$new_c_rank)
+plot(xrange, yrange, type="n", xlab="Date",
+   ylab="Per Capita New Case Rank", bty="n")
+pallette <- rainbow(length(states))
+names(pallette) <- states
+for (state in states) {
+  st_df <- m_st[m_st$state == state, ]
+  st_df <- st_df[order(st_df$date), ]
+  lines(st_df$date, smooth(st_df$new_c_rank, kind="3RS3R", endrule="copy"), col=pallette[state])
+  last <- st_df[nrow(st_df), ]
+  text(last$date, y=last$new_c_rank, last$stusps, pos=4, offset=0.1, cex=0.8, col=pallette[state])
+} 
+
+```
+
+### State death rank
+
+```{r echo = FALSE}
+new_d_order_st <- order(t_st$new_d_rank)
+t_st[new_d_order_st, c("state", "new_deaths", "new_deaths_permil", "new_d_rank")]
+```
+
+```{r echo = FALSE, fig.height=8}
+m_st_sel <- m_st[is.element(m_st$state, states) & m_st$date >= "2020-03-01", ]
+xrange <- range(m_st_sel$date)
+xrange[2] <- xrange[2] + 7 # pad to leave space on right for labels
+yrange <- range(m_st_sel$new_d_rank)
+plot(xrange, yrange, type="n", xlab="Date",
+   ylab="Per Capita New Death Rank", bty="n")
+pallette <- rainbow(length(states))
+names(pallette) <- states
+for (state in states) {
+  st_df <- m_st[m_st$state == state, ]
+  st_df <- st_df[order(st_df$date), ]
+  lines(st_df$date, smooth(st_df$new_d_rank, kind="3RS3R", endrule="copy"), col=pallette[state])
+  last <- st_df[nrow(st_df), ]
+  text(last$date, y=last$new_d_rank, last$stusps, pos=4, offset=0.1, cex=0.8, col=pallette[state])
+} 
+
+```
+
+### Growth Signs
+
+```{r echo =FALSE}
+cg <- factor(t_st$new_case_growth > 0, levels=c(FALSE, TRUE), labels=c(" <= 0", "> 0"))
+cgt <- as.data.frame(table(cg))
+colnames(cgt) <- c("New Case Growth", "Count")
+cgt
+
+dg <- factor(t_st$new_death_growth > 0, levels=c(FALSE, TRUE), labels=c(" <= 0", "> 0"))
+dgt <- as.data.frame(table(dg))
+colnames(dgt) <- c("New Death Growth", "Count")
+dgt
+```
+
+## All States
+
+```{r echo=FALSE}
+states <- unique(m_st$state)
+cols <- 4
+st_rows <- floor((length(states) + 1) / cols)
+```
+
+### Cumulative Cases Per Million
+
+```{r echo=FALSE, fig.height=20}
+par(mfrow=c(st_rows, cols))
+par(mar=c(2, 1, 2, 2))
+xrange <- range(m_st$date)
+yrange <- range(m_st$cases_permil)
+for (state in t_st$state[c_order_st]) {
+  st_df <- m_st[m_st$state == state, ]
+  st_df <- st_df[order(st_df$date), ]
+  st_color <- st_df$color[1]
+  main <- sprintf("%.0f %s", st_df$c_rank[nrow(st_df)], st_df$stusps[1])
+  plot(xrange, yrange, type="n", xlab="", ylab="", axes=FALSE, col=st_color)
+  title(main, adj=0, line=-1, col.main=st_color)
+  axis.Date(1, xrange, col=st_color, col.axis=st_color)
+  axis(4, at=c(round(st_df$cases_permil[nrow(st_df)])), col=st_color, col.axis=st_color)
+  lines(st_df$date, st_df$cases_permil, col=st_df$color)
+}
+```
+
+### Cumulative Deaths Per Million
+
+```{r echo=FALSE, fig.height=20}
+par(mfrow=c(st_rows, cols))
+par(mar=c(2, 1, 2, 2))
+xrange <- range(m_st$date)
+yrange <- range(m_st$deaths_permil)
+for (state in t_st$state[d_order_st]) {
+  st_df <- m_st[m_st$state == state, ]
+  st_df <- st_df[order(st_df$date), ]
+  st_color <- st_df$color[1]
+  main <- sprintf("%.0f %s", st_df$d_rank[nrow(st_df)], st_df$stusps[1])
+  plot(xrange, yrange, type="n", xlab="", ylab="", axes=FALSE, col=st_color)
+  title(main, adj=0, line=-1, col.main=st_color)
+  axis.Date(1, xrange, col=st_color, col.axis=st_color)
+  axis(4, at=c(round(st_df$deaths_permil[nrow(st_df)])), col=st_color, col.axis=st_color)
+  lines(st_df$date, st_df$deaths_permil, col=st_df$color)
+}
+```
+
+### New Cases Per Million
+
+```{r echo=FALSE, fig.height=20}
+par(mfrow=c(st_rows, cols))
+par(mar=c(2, 1, 2, 2))
+df <- m_st[!is.na(m_st$new_cases_permil),]
+xrange <- range(df$date)
+yrange <- range(df$new_cases_permil)
+for (state in t_st$state[new_c_order_st]) {
+  st_df <- df[df$state == state, ]
+  st_df <- st_df[order(st_df$date), ]
+  st_color <- st_df$color[1]
+  main <- sprintf("%.0f %s", st_df$new_c_rank[nrow(st_df)], st_df$stusps[1])
+  plot(xrange, yrange, type="n", xlab="", ylab="", axes=FALSE, col=st_color)
+  title(main, adj=0, line=-1, col.main=st_color)
+  axis.Date(1, xrange, col=st_color, col.axis=st_color)
+  axis(4, at=c(round(st_df$new_cases_permil[nrow(st_df)])), col=st_color, col.axis=st_color)
+  lines(st_df$date, st_df$new_cases_permil, col=st_df$color)
+}
+```
+
+### New Deaths Per Million
+
+```{r echo=FALSE, fig.height=20}
+par(mfrow=c(st_rows, cols))
+par(mar=c(2, 1, 2, 2))
+df <- m_st[!is.na(m_st$new_deaths_permil),]
+xrange <- range(df$date)
+yrange <- range(df$new_deaths_permil)
+for (state in t_st$state[new_d_order_st]) {
+  st_df <- df[df$state == state, ]
+  st_df <- st_df[order(st_df$date), ]
+  st_color <- st_df$color[1]
+  main <- sprintf("%.0f %s", st_df$new_d_rank[nrow(st_df)], st_df$stusps[1])
+  plot(xrange, yrange, type="n", xlab="", ylab="", axes=FALSE, col=st_color)
+  title(main, adj=0, line=-1, col.main=st_color)
+  axis.Date(1, xrange, col=st_color, col.axis=st_color)
+  axis(4, at=c(round(st_df$new_deaths_permil[nrow(st_df)])), col=st_color, col.axis=st_color)
+  lines(st_df$date, st_df$new_deaths_permil, col=st_df$color)
+}
+```
+
+### New Case Growth Per Million
+
+```{r echo=FALSE, fig.height=20}
+new_c_growth_order_st <- order(t_st$new_c_growth_rank)
+par(mfrow=c(st_rows, cols))
+par(mar=c(2, 1, 2, 2))
+df <- m_st[!is.na(m_st$new_case_growth_permil),]
+xrange <- range(df$date)
+yrange <- range(df$new_case_growth_permil)
+for (state in t_st$state[new_c_growth_order_st]) {
+  st_df <- df[df$state == state, ]
+  st_df <- st_df[order(st_df$date), ]
+  st_color <- st_df$color[1]
+  main <- sprintf("%.0f %s", st_df$new_c_growth_rank[nrow(st_df)], st_df$stusps[1])
+  plot(xrange, yrange, type="n", xlab="", ylab="", axes=FALSE, col=st_color)
+  title(main, adj=0, line=-1, col.main=st_color)
+  axis.Date(1, xrange, col=st_color, col.axis=st_color)
+  axis(4, at=c(round(st_df$new_case_growth_permil[nrow(st_df)])), col=st_color, col.axis=st_color)
+  lines(st_df$date, st_df$new_case_growth_permil, col=st_df$color)
+}
+```
+
+### New Death Growth Per Million
+
+```{r echo=FALSE, fig.height=20}
+new_d_growth_order_st <- order(t_st$new_d_growth_rank)
+par(mfrow=c(st_rows, cols))
+par(mar=c(2, 1, 2, 2))
+df <- m_st[!is.na(m_st$new_death_growth_permil),]
+xrange <- range(df$date)
+yrange <- range(df$new_death_growth_permil)
+for (state in t_st$state[new_d_growth_order_st]) {
+  st_df <- df[df$state == state, ]
+  st_df <- st_df[order(st_df$date), ]
+  st_color <- st_df$color[1]
+  main <- sprintf("%.0f %s", st_df$new_d_growth_rank[nrow(st_df)], st_df$stusps[1])
+  plot(xrange, yrange, type="n", xlab="", ylab="", axes=FALSE, col=st_color)
+  title(main, adj=0, line=-1, col.main=st_color)
+  axis.Date(1, xrange, col=st_color, col.axis=st_color)
+  axis(4, at=c(round(st_df$new_death_growth_permil[nrow(st_df)])), col=st_color, col.axis=st_color)
+  lines(st_df$date, st_df$new_death_growth_permil, col=st_df$color)
+}
+```
+
+## California Counties
+
+### Cumulative Cases Per Million
+
+```{r echo=FALSE, fig.height=20}
+ca_cos <- unique(t_co_ca$county)
+co_rows <- floor((length(ca_cos) + 1) / cols)
+
+par(mfrow=c(co_rows, cols))
+par(mar=c(2, 1, 2, 2))
+xrange <- range(m_co_ca$date)
+yrange <- range(m_co_ca$cases_permil)
+for (county in ca_cos[order(t_co_ca$c_rank)]) {
+  co_df <- m_co_ca[m_co_ca$county == county, ]
+  co_df <- co_df[order(co_df$date), ]
+  main <- sprintf("%.0f %s", co_df$c_rank[nrow(co_df)], co_df$county[1])
+  plot(xrange, yrange, type="n", xlab="", ylab="", axes=FALSE)
+  title(main, adj=0, line=-1)
+  axis.Date(1, xrange)
+  axis(4, at=c(round(co_df$cases_permil[nrow(co_df)])))
+  lines(co_df$date, co_df$cases_permil)
+}
+```
+
+### Cumulative Deaths Per Million
+
+```{r echo=FALSE, fig.height=20}
+par(mfrow=c(co_rows, cols))
+par(mar=c(2, 1, 2, 2))
+xrange <- range(m_co_ca$date)
+yrange <- range(m_co_ca$deaths_permil)
+for (county in ca_cos[order(t_co_ca$d_rank)]) {
+  co_df <- m_co_ca[m_co_ca$county == county, ]
+  co_df <- co_df[order(co_df$date), ]
+  main <- sprintf("%.0f %s", co_df$d_rank[nrow(co_df)], co_df$county[1])
+  plot(xrange, yrange, type="n", xlab="", ylab="", axes=FALSE)
+  title(main, adj=0, line=-1)
+  axis.Date(1, xrange)
+  axis(4, at=c(round(co_df$deaths_permil[nrow(co_df)])))
+  lines(co_df$date, co_df$deaths_permil)
+}
+```
+
+### New Cases Per Million
+
+```{r echo=FALSE, fig.height=20}
+par(mfrow=c(co_rows, cols))
+par(mar=c(2, 1, 2, 2))
+m_df <- m_co_ca[!is.na(m_co_ca$new_cases_permil),]
+t_df <- t_co_ca[!is.na(t_co_ca$new_cases_permil),]
+new_c_order_co_ca <- order(t_df$new_c_rank)
+xrange <- range(m_df$date)
+yrange <- range(m_df$new_cases_permil)
+for (county in t_df$county[new_c_order_co_ca]) {
+  co_df <- m_df[which(as.character(m_df$county) == as.character(county)), ]
+  co_df <- co_df[order(co_df$date), ]
+  main <- sprintf("%.0f %s", co_df$new_c_rank[nrow(co_df)], co_df$county[1])
+  plot(xrange, yrange, type="n", xlab="", ylab="", axes=FALSE)
+  title(main, adj=0, line=-1)
+  axis.Date(1, xrange)
+  axis(4, at=c(round(co_df$new_cases_permil[nrow(co_df)])))
+  lines(co_df$date, co_df$new_cases_permil)
+}
+```
+
+### New Deaths Per Million
+
+```{r echo=FALSE, fig.height=20}
+par(mfrow=c(co_rows, cols))
+par(mar=c(2, 1, 2, 2))
+m_df <- m_co_ca[!is.na(m_co_ca$new_deaths_permil),]
+t_df <- t_co_ca[!is.na(t_co_ca$new_deaths_permil),]
+new_d_order_co_ca <- order(t_df$new_d_rank)
+xrange <- range(m_df$date)
+yrange <- range(m_df$new_deaths_permil)
+for (county in t_df$county[new_d_order_co_ca]) {
+  co_df <- m_df[which(as.character(m_df$county) == as.character(county)), ]
+  co_df <- co_df[order(co_df$date), ]
+  main <- sprintf("%.0f %s", co_df$new_d_rank[nrow(co_df)], co_df$county[1])
+  plot(xrange, yrange, type="n", xlab="", ylab="", axes=FALSE)
+  title(main, adj=0, line=-1)
+  axis.Date(1, xrange)
+  axis(4, at=c(round(co_df$new_deaths_permil[nrow(co_df)])))
+  lines(co_df$date, co_df$new_deaths_permil)
+}
+```
