@@ -17,7 +17,6 @@ covid_co <- do.call(rbind, lapply(
   sprintf('../../../nytimes/covid-19-data/us-counties-%d.csv', c(2020:2022)),
   function(fn) read.csv(fn)
 ))
-#covid_co <- read.csv("../../../nytimes/covid-19-data/us-counties.csv")
 covid_co$date <- as.Date(covid_co$date)
 
 pop_co <- read.csv("../census/co-est2019-alldata.csv")[, c("STATE", "COUNTY", "STNAME", "CTYNAME", "POPESTIMATE2019")]
@@ -286,7 +285,7 @@ for (state in states) {
 
 ```
 
-### State death rank
+### State new death rank
 
 ```{r echo = FALSE}
 new_d_order_st <- order(t_st$new_d_rank)
