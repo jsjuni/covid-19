@@ -28,7 +28,6 @@ class Fetch < Logger::Application
     repo_shas = get_repo_shas(URI, @token, OWNER, REPO)
     local_shas = get_local_shas(repo_shas.keys)
     to_fetch = get_to_fetch(repo_shas, local_shas)
-    puts to_fetch
     to_fetch.each do |file|
       log(INFO, "fetch #{file}")
       fetch(URI, @token, OWNER, REPO, file)
