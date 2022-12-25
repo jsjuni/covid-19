@@ -10,7 +10,6 @@ require 'digest'
 class Fetch < Logger::Application
 
   URI = 'https://api.github.com/repos'
-  TOKEN = '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'
   OWNER = 'nytimes'
   REPO = 'covid-19-data'
   FILE_PATS = [
@@ -20,17 +19,19 @@ class Fetch < Logger::Application
 
   def initialize(argv)
     super('fetch')
+    @token = argv[0]
     @level = Logger::DEBUG
   end
 
   def run
     log(INFO, 'begin')
-    repo_shas = get_repo_shas(URI, TOKEN, OWNER, REPO)
+    repo_shas = get_repo_shas(URI, @token, OWNER, REPO)
     local_shas = get_local_shas(repo_shas.keys)
     to_fetch = get_to_fetch(repo_shas, local_shas)
+    puts to_fetch
     to_fetch.each do |file|
       log(INFO, "fetch #{file}")
-      fetch(URI, TOKEN, OWNER, REPO, file)
+      fetch(URI, @token, OWNER, REPO, file)
     end
     log(INFO, 'end')
     0
@@ -38,7 +39,7 @@ class Fetch < Logger::Application
 
   def get_repo_shas(uri, token, owner, repo)
     uri = URI("#{uri}/#{owner}/#{repo}/contents")
-    res = Net::HTTP.start(uri.host, uri.port, use_ssl: true) do |http|
+    Net::HTTP.start(uri.host, uri.port, use_ssl: true) do |http|
       req = Net::HTTP::Get.new(uri.request_uri)
       req['Authorization'] = "token #{token}"
       req['Accept'] = 'application/vnd.github.v4.raw'
