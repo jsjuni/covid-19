@@ -142,7 +142,7 @@ for (date in min(m_co_ca$date):max(m_co_ca$date)) {
 States of interest:
 
 ```{r echo = FALSE}
-states <- c("California", "Mississippi", "Illinois", "District of Columbia", "New York", "Massachusetts", "Texas", "North Carolina", "Louisiana", "Alabama", "Oklahoma")
+states <- c("California", "Mississippi", "Illinois", "District of Columbia", "New York", "Massachusetts", "Texas", "South Carolina", "Louisiana", "Alabama", "Oklahoma")
 states
 ```
 
